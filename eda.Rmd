@@ -1,0 +1,322 @@
+---
+title: "EDA"
+author: "Yupeng Yang"
+date: "2023-10-12"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+Sys.setenv(LANG = "en")
+```
+
+# Exploratory Data Analysis
+
+## 1. Notice
+
+### 1.1 Required Libraries
+
+```{r}
+data_path <- "./WA_Fn-UseC_-Telco-Customer-Churn.csv"
+src_path <- "./data_cleaning.R"
+library(confintr)
+library(factoextra)
+library(FactoMineR)
+library(GGally)
+library(ggplot2)
+source(src_path)
+```
+
+## 2. Overview
+
+### 2.1 Load Dataset
+
+```{r}
+churn <- read.csv(data_path)
+head(churn)
+```
+
+Quickly check the shape of the data frame.
+
+```{r}
+dim(churn)
+```
+
+### 2.2 Check Data Integrity
+
+We first check if there exists any duplicated rows.
+
+```{r}
+dim(unique(churn))
+length(unique(churn$customerID))
+```
+
+The result indicates there is no duplicated rows and the customer ID is the primary key of this data set.
+
+We then check the completeness of the data set.
+
+```{r}
+churn[apply(churn, 1, function(row) any(is.na(row))),]
+```
+
+There are 11 rows missing variable "TotalCharges". Delete these rows for data integrity.
+
+```{r}
+churn <- na.omit(churn)
+dim(churn)
+```
+
+Then look at the columns of this data set.
+
+```{r}
+summary(churn)
+```
+
+Factorize all characters except customer ID. (also factorize senior citizen)
+
+```{r}
+unique(churn$SeniorCitizen)
+```
+
+```{r}
+for (i in colnames(churn)) {
+  if (class(churn[, i]) == "character" && i != "customerID") {
+    churn[, i] <- as.factor(churn[, i])
+  }
+  if (i == "SeniorCitizen") {
+    churn[, i] <- as.factor(churn[, i])
+  }
+}
+summary(churn)
+```
+
+### 2.3 Data Redundancy Check
+
+Before we move to data visualization, it is good to check data redundancy. First, MultipleLine seems contain all the information of PhoneService
+
+```{r}
+sum(churn$PhoneService == "No") == sum(churn$MultipleLines == "No phone service")
+```
+
+It indicate that "No phone service" in MultipleLine exactly the same as "No" in PhoneService (Complete Dependence). For simplicity, one can merge "No phone service" into "No" in MultipleLines. This will provide better model fitting process and will not change the meaning of "Yes" label in MultipleLines. Apply the transform as follows.
+
+```{r}
+churn[churn$MultipleLines == "No phone service",]$MultipleLines <- "No"
+```
+
+Similarly, one can check the "No internet service" in "InternetService", "OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", and "StreamingMovies".
+
+```{r}
+sum(churn$InternetService == "No") == sum(churn$OnlineSecurity == "No internet service")
+sum(churn$InternetService == "No") == sum(churn$OnlineBackup == "No internet service")
+sum(churn$InternetService == "No") == sum(churn$DeviceProtection == "No internet service")
+sum(churn$InternetService == "No") == sum(churn$TechSupport == "No internet service")
+sum(churn$InternetService == "No") == sum(churn$StreamingTV == "No internet service")
+sum(churn$InternetService == "No") == sum(churn$StreamingMovies == "No internet service")
+```
+
+It indicates the same issue appears again. The easiest and most model friendly way is changing all of the above variables into binary variables.
+
+```{r}
+churn[churn$OnlineSecurity == "No internet service",]$OnlineSecurity <- "No"
+churn[churn$OnlineBackup == "No internet service",]$OnlineBackup <- "No"
+churn[churn$DeviceProtection == "No internet service",]$DeviceProtection <- "No"
+churn[churn$TechSupport == "No internet service",]$TechSupport <- "No"
+churn[churn$StreamingTV == "No internet service",]$StreamingTV <- "No"
+churn[churn$StreamingMovies == "No internet service",]$StreamingMovies <- "No"
+```
+
+In addition, one can find there exist multicollinearity as follows:
+
+```{r}
+cor(churn$tenure * churn$MonthlyCharges, churn$TotalCharges)
+```
+
+$cor(tenture \times monthly\ charge,\ total\ charge)\approx 1$. Thus, we delete total charges.
+
+```{r}
+churn <- subset(churn, select = -TotalCharges)
+```
+
+In short, there are 2 numerical variables and 16 categorical variables.
+
+## 3. Relationship checking
+
+Use predefined data cleaning function:
+
+```{r}
+# churn <- data_clean(data_path)
+churn <- read.csv("churn_final.csv")
+for (i in colnames(churn)) {
+  if (class(churn[, i]) == "character" && i != "customerID") {
+    churn[, i] <- as.factor(churn[, i])
+  }
+  if (i == "SeniorCitizen") {
+    churn[, i] <- as.factor(churn[, i])
+  }
+}
+summary(churn)
+```
+
+### 3.1 Single Variable Distribution Checking
+
+First, check the distribution of response.
+
+```{r}
+ggplot()+
+  geom_bar(aes(churn$Churn, fill="churn"))
+```
+
+The response is imbalanced. Next check the distributions of all categorical predictors. (Uncomment to see them)
+
+```{r}
+# for (i in colnames(churn)) {
+#   if (class(churn[, i]) == "factor" && i != "Churn") {
+#     g <- ggplot()+
+#       geom_bar(aes(churn[, i], fill=i))
+#     print(g)
+#   }
+# }
+```
+
+Next, check the distribution of all numerical predictors. (Uncomment to see them)
+
+```{r}
+# for (i in colnames(churn)) {
+#   if (class(churn[, i]) == "numeric" || class(churn[, i]) == "integer") {
+#     g <- ggplot()+
+#       geom_boxplot(aes(churn[, i], fill=i))
+#     print(g)
+#   }
+# }
+```
+
+## 3.2 Mutivariable Relationship Checking
+
+```{r}
+colnames(churn)
+```
+
+Cramer's V, named after the British statistician Harald Cramer, is a measure of association used in statistics and research to assess the strength and nature of the relationship between two categorical variables. It is an extension of the chi-squared test of independence and is often used when dealing with contingency tables. Cramer's V value ranges from 0 to 1, with higher values indicating a stronger association between the variables. A Cramer's V value of 0 suggests no association, while a value of 1 signifies a perfect association. Researchers and data analysts commonly use Cramer's V to determine the significance and effect size of relationships between categorical variables, making it a valuable tool in fields such as social sciences, epidemiology, and market research.
+
+```{r}
+categorical <- c(1:4, 6:17)
+for (i in categorical) {
+  for (j in categorical) {
+    V <- cramersv(churn[c(i, j)])
+    if (V >= 0.5 && i < j) {
+      cat(colnames(churn)[i], colnames(churn)[j], "Cramers' V", V, "\n")
+    }
+  }
+}
+```
+
+We can see that after the data cleaning, all of the categorical variables doesn't have large correlation between each other.
+
+### 3.2.1 One-to-one Relationship betwen Reponse and Predictors
+
+First, one can use logistic regression (baseline) to determine the relationship between response and predictors.
+
+```{r}
+logistic.model1 <- glm(Churn ~ ., churn[,c(1:20, 22)], family = binomial)
+summary(logistic.model1)
+```
+
+From logistic regression model, we can find SeniorCitizen, tenure, MultipleLines, InternetService, Contract, PaperlessBilling, and PaymentMethod are significant.
+
+### 3.2.2 Pairwise Relationship betwen Reponse and Predictors
+
+Now, we plot these significant predictors pairwisely. (Uncomment to generate)
+
+```{r}
+# g <- ggpairs(
+#   data = churn,
+#   columns = c(
+#     "SeniorCitizen",
+#     "tenure",
+#     "MultipleLines",
+#     "InternetService",
+#     "Contract",
+#     "PaperlessBilling",
+#     "PaymentMethod"
+#   ),
+#   mapping = aes(color=Churn, alpha=0.5),
+#   title = "Pair Plot",
+#   progress = FALSE
+# )
+# png(filename="pair_plot.png", width = 2500, height = 2500)
+# print(g)
+# dev.off()
+```
+
+This is the plot for continuous variables only.
+
+```{r}
+ggpairs(
+  data = churn,
+  columns = c("tenure", "MonthlyCharges"),
+  mapping = aes(color = Churn, alpha = 0.5),
+  title = "Pair Plot",
+  progress = FALSE
+)
+```
+
+The customers with churn tend to have low tenure and high monthly charges.
+
+Here are some variables that have the largest Cramer's V association with the repsonse.
+
+```{r}
+categorical <- c(1:4, 6:17)
+for (i in categorical) {
+    V <- cramersv(churn[c(i, 19)])
+    if (V >= 0.3) {
+      cat(colnames(churn)[i], "Cramers' V", V, "\n")
+    }
+}
+```
+
+There are some interesting facet plotting with above variables.
+
+```{r}
+g <-
+  ggplot(churn, aes(x = tenure, y = MonthlyCharges, color = Churn)) +
+  geom_point(alpha = 0.75) +
+  facet_grid(Contract~InternetService)
+print(g)
+
+g <-
+  ggplot(churn, aes(x = tenure, y = MonthlyCharges, color = Churn)) +
+  geom_point(alpha = 0.75) +
+  facet_grid(Contract~PaymentMethod)
+print(g)
+```
+
+One can derive the following insights:
+1. The customers that have short-term (monthly) contract tend to churn.
+2. The customers that have a larger tenure tend to sign a contract with a longer term.
+3. The customers that use electronic check as the payment method tend to sign a monthly contract.
+
+### 3.2.3 Dimension Reduction (FA)
+
+Here is the results of factor analysis.
+
+```{r}
+famd_result <- FAMD(churn[1:18], graph = FALSE)
+fviz_pca_ind(
+  famd_result,
+  geom.ind = "point",
+  pointsize = 2,
+  pointshape = 21,
+  fill.ind = churn$Churn,
+  palette = c("#00afbb", "#fc4e07"),
+  addEllipses = TRUE,
+  legend.title = "Churn",
+  title = "Factor Analysis for Mixed Data"
+) + theme_grey()
+```
+
+
+```{r}
+famd_result$var
+```
+

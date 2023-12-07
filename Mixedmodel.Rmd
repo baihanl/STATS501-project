@@ -1,0 +1,224 @@
+---
+title: "mixed model"
+output: html_document
+date: '2023-11-20'
+---
+
+1. Load Data
+```{r}
+Churn_data <- read.csv("/home/baihanl/STATS501/churn_final.csv")
+#Churn_data <- Churn_data[,-1]
+```
+
+```{r}
+head(Churn_data)
+```
+
+2. Factorize variables that have different categories. 
+```{r}
+for (i in colnames(Churn_data)) {
+  if (class(Churn_data[, i]) == "character" && i != "customerID") {
+    Churn_data[, i] <- as.factor(Churn_data[, i])
+  }
+  if (i == "SeniorCitizen") {
+    Churn_data[, i] <- as.factor(Churn_data[, i])
+  }
+}
+print(head(Churn_data))
+```
+
+3. Examine the number of data points for each City
+
+First, we create a frequency table for the City column.
+
+```{r}
+freq_table <- table(Churn_data$City)
+
+# Find the minimum and maximum counts
+min_count <- min(freq_table)
+max_count <- max(freq_table)
+
+# Print the minimum and maximum counts
+print(paste("Minimum count:", min_count))
+print(paste("Maximum count:", max_count))
+```
+
+Then, we bin these frequencies into the specified intervals. 
+
+```{r}
+# Function to categorize counts
+bin_counts <- function(count) {
+  if (count == 3) {
+    return("[3]")
+  } else if (count >= 4 & count <= 5) {
+    return("[4,5]")
+  } else if (count >= 6 & count <= 20) {
+    return("[6,20]")
+  } else if (count >= 21 & count <= 100) {
+    return("[21,100]")
+  } else {
+    return("[101,304]")
+  } 
+}
+
+# Apply this function to each frequency
+binned_freqs <- sapply(freq_table, bin_counts)
+
+# Create a data frame and order the intervals
+binned_freqs_df <- as.data.frame(table(binned_freqs))
+binned_freqs_df <- binned_freqs_df[
+  order(match(binned_freqs_df$binned_freqs, 
+              c("[3]", "[4,5]", "[6,20]", "[21,100]", "[101,304]"))), ]
+
+names(binned_freqs_df) <- c("Frequency(Intervals)","Number of Cities at this frequency")
+binned_freqs_df
+```
+
+Here is a dataframe that shows how frequently each city appear in the dataset. 
+We can see that most of the cities contain 4 or 5 data points in the dataset. 
+There are only a few cities that contain only 3 data points or over 100 data 
+points. Mixed effect model with city being the random effect or the cluster 
+group would be a good choose. First, the customer may have different churn 
+preference in different cities. Second, there are many cities in the dataset and 
+we are not very interested in the exact difference of Churn result 
+between a customer in region A and region B, so cities would be 
+better to be the random effect. Third, different cities have different 
+data points, and mixed model is useful for cluster groups with unequal sizes. 
+
+```{r}
+library(ggplot2)
+ggplot(binned_freqs_df,aes(x = `Frequency(Intervals)`, y = `Number of Cities at this frequency`))+
+  geom_bar(stat = "identity", fill = "steelblue")+
+  geom_text(aes(label = `Number of Cities at this frequency`), vjust = -0.3, size=3.5) +
+  xlab("Frequency(Intervals)")+
+  ylab("Number of Cities at this frequency")+
+  ggtitle("Distributin of Counts Among Cities")
+
+```
+
+
+From the result of exploratory data analysis, 
+we select some variables that is significant in the logistic regression modeland shows relatively high correlation with the Churn.
+
+We fit a logistic mixed effect regression with random cities intercepts. 
+
+```{r}
+library(lme4)
+
+#A logistic mixed effect regression with random cities intercepts
+M1 <- glmer(Churn ~ SeniorCitizen + InternetService + 
+              tenure + Contract + PaperlessBilling +(1|City), 
+            family = binomial, data = Churn_data)
+
+summary(M1)
+```
+
+From the output, we can see that all fixed effect variable are significance. 
+The standard deviation of the random effect is 0.1183, 
+which shows the variability among cities.  
+
+We hope to extract the confidence interval for standard deviation of the random intercepts. 
+```{r}
+conf_int <- confint(M1)
+conf_int
+```
+
+```{r}
+conf_int_random_intercept <- conf_int[".sig01",]
+conf_int_random_intercept 
+```
+
+The lower bound of the 95% confidence interval for the standard deviation of this random effect is 0. This implies that there's a possibility that the variance of this random effect could be negligible. 
+
+
+```{r}
+library("performance")
+icc_val <- performance::icc(M1)
+print(icc_val)
+```
+
+
+We fit a logistic mixed effect regression with both random cities intercepts and random tenure slopes for cities.
+```{r}
+#A logistic mixed effect regression with both random cities intercepts and random tenure slopes for cities
+M2 <- glmer(Churn ~ SeniorCitizen + InternetService + 
+              tenure + Contract + PaperlessBilling +(1|City)+(0+tenure|City), 
+            family = binomial, data = Churn_data)
+
+summary(M2)
+```
+
+The standard deviation for the random slope of the cities is 0.01443. The standard deviation of the random intercept of the cities is 0.01430.
+
+```{r}
+library("performance")
+icc_val <- performance::icc(M2)
+print(icc_val)
+```
+
+We use likelihood ratio test to compare the two nested models.
+
+```{r}
+#Likelihood ratio test
+anova(M1, M2)
+```
+
+
+```{r}
+M3 <- glmer(Churn ~ SeniorCitizen + InternetService + 
+              tenure + Contract + PaperlessBilling +(1|City)+(0+PaperlessBilling|City), 
+            family = binomial, data = Churn_data)
+
+summary(M3)
+```
+
+```{r}
+anova(M1, M3)
+```
+```{r}
+M4 <- glmer(Churn ~ SeniorCitizen + InternetService + 
+              tenure + Contract + PaperlessBilling +(1|City)+(0+InternetService|City), 
+            family = binomial, data = Churn_data)
+
+summary(M4)
+```
+
+```{r}
+anova(M1,M4)
+```
+
+```{r}
+M5 <- glmer(Churn ~ SeniorCitizen + InternetService + 
+              tenure + Contract + PaperlessBilling +(1|City)+(0+SeniorCitizen|City), 
+            family = binomial, data = Churn_data)
+
+summary(M5)
+```
+
+```{r}
+anova(M1,M5)
+```
+
+```{r}
+M6 <- glmer(Churn ~ SeniorCitizen + InternetService + 
+              tenure + Contract + PaperlessBilling +(1|City)+(0+Contract|City), 
+            family = binomial, data = Churn_data)
+
+summary(M6)
+```
+
+```{r}
+anova(M1,M6)
+```
+
+```{r}
+icc(M6)
+```
+
+The p-value of Anova(M1, M2) and Anova(M1, M6) are smaller than 0.05, which suggests that the model with the additional random slope for tenure or Contract provide significantly better fit to the data than the model with only the random city intercept. 
+
+The p-values for other models comparisons are less than 0.05, which means addition random slopes for other variables may not improve the random intercepts model. 
+
+We do not consider more complex model such as the model with correlated 
+random intercepts and random slopes since we do not want our model to be 
+singular or to be overfitt4ing. We hopes a trade-off between the model fit and model complexity. 

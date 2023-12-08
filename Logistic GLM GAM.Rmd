@@ -1,0 +1,314 @@
+---
+title: "Logistic/GAM"
+output: html_document
+date: "2023-11-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(glmnet)
+library(confintr)
+library(factoextra)
+library(FactoMineR)
+library(GGally)
+library(ggplot2)
+library(mgcv)
+library(pROC)
+library(caret)
+library(MLmetrics)
+```
+
+
+```{r}
+train_set = read.csv("C:/Users/Yizhuo Li/Documents/R/STATS 501/501Project/Churn_data_train.csv")
+valid_set = read.csv("C:/Users/Yizhuo Li/Documents/R/STATS 501/501Project/Churn_data_test.csv")
+train_set = train_set[,-1]
+valid_set = valid_set[,-1]
+
+train_x = model.matrix(~ . - 1, data = train_set[, 1:23])
+train_y = train_set$Churn
+valid_x = model.matrix(~ . - 1, data = valid_set[, 1:23])
+valid_y = valid_set$Churn
+```
+
+```{r}
+logistic.model1 <- glm(Churn ~ ., train_set, family = binomial)
+#summary(logistic.model1)
+```
+```{r}
+# define training control
+train_set$Churn = factor(train_set$Churn)
+train_control <- trainControl(method = "cv", number = 10)
+
+# train the model on training set
+model <- train(Churn ~ .,
+               data = train_set,
+               trControl = train_control,
+               method = "glm",
+               family=binomial())
+
+summary(model)
+```
+
+
+
+#Consider the dispersion parameter
+
+```{r}
+logistic.model2 <- glm(Churn ~ ., train_set, family = quasibinomial)
+predicted_probabilities <- predict(logistic.model1, newdata = valid_set, type = "response")
+threshold <- 0.5
+predicted_classes <- ifelse(predicted_probabilities > threshold, 1, 0)
+actual_outcomes <- valid_set$Churn
+confusion_matrix <- table(Predicted = predicted_classes, Actual = actual_outcomes)
+print(confusion_matrix)
+TP <- confusion_matrix[2, 2]
+FP <- confusion_matrix[1, 2]
+FN <- confusion_matrix[2, 1]
+TN <- confusion_matrix[1, 1]
+
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+
+F1_score <- 2 * (precision * recall) / (precision + recall)
+F1_score
+
+roc_result <- roc(valid_set$Churn, predicted_probabilities)
+auc_value <- auc(roc_result)
+print(auc_value)
+
+
+BER = 0.5*(FP/(TN+FP) + FN/(FN+TP))
+BER
+```
+```{r}
+summary(logistic.model1)
+summary(logistic.model2)
+```
+
+#backward elimination for logistic model
+```{r}
+logistic.model1 = update(logistic.model1, Churn ~ . - PaperlessBilling_Yes)
+summary(logistic.model1)
+```
+```{r}
+colnames (categorical_data)
+```
+
+
+
+```{r}
+logistic.model1 = update(logistic.model1, Churn ~ . - PaperlessBilling_Yes - SeniorCitizen_1 )
+summary(logistic.model1)
+```
+
+```{r}
+set.seed(48109)
+
+# Number of bootstrap samples
+nb <- 199
+# Number of observations
+nn <- nrow(train_set)
+
+# Initialize matrices to store bootstrap results
+bcoefmat <- matrix(NA, nb, length(coef(logistic.model1)))
+bresmat <- matrix(NA, nb, nn)
+
+# Bootstrap loop
+for (ii in 1:nb) {
+  # Generate bootstrap indices for the observations
+  selectID <- sample(1:nn, nn, replace = TRUE)
+  
+  # Create the bootstrapped dataset
+  dataB <- train_set[selectID, ]
+  
+  # Fit logistic regression model to the bootstrap samples
+  bmod <- glm(Churn ~ gender_Male + Partner_Yes + Dependents_Yes + 
+                PhoneService_Yes + MultipleLines_Yes + InternetService_Fiber.optic + 
+                InternetService_No + OnlineSecurity_Yes + OnlineBackup_Yes + 
+                DeviceProtection_Yes + TechSupport_Yes + StreamingTV_Yes + 
+                StreamingMovies_Yes + Contract_One.year + Contract_Two.year + 
+                PaymentMethod_Credit.card..automatic. + PaymentMethod_Electronic.check + 
+                PaymentMethod_Mailed.check + tenure + MonthlyCharges + Age, 
+              data = dataB, family = "binomial")
+  
+  # Store coefficients and residuals for each bootstrap iteration
+  bcoefmat[ii, ] <- coef(bmod)
+  bresmat[ii, ] <- residuals(bmod)
+}
+# Convert coefficient matrix to a data frame
+bcoefmat <- data.frame(bcoefmat)
+
+# Calculate quantiles for bootstrap coefficient estimates
+round(apply(bcoefmat, 2, function(x) quantile(x, c(0.025, 0.975))), 4)
+```
+
+
+```{r}
+library(dplyr)
+linpred = predict(logistic.model1)
+predprob <- predict(logistic.model1, type="response")
+# Add predicted probabilities to the data frame
+train_set_1 <- mutate(train_set, predprob = predict(logistic.model1, type = "response"))
+train_set_1$y <- ifelse(train_set_1$Churn == 0, 0, 1)
+
+# Group by bins of predicted probabilities
+gdf <- group_by(train_set_1, cut(linpred, breaks = unique(quantile(linpred, (1:100)/101))))
+
+# Summarize data within each bin
+hldf <- summarise(gdf, y = sum(y), ppred = mean(predprob), count = n())
+
+# Calculate standard errors
+hldf <- mutate(hldf, se.fit = sqrt(ppred * (1 - ppred) / count))
+
+# Plot observed proportions vs. predicted probabilities with confidence intervals
+library(ggplot2)
+
+ggplot(hldf, aes(x = ppred, y = y/count, ymin = y/count - 2 * se.fit, ymax = y/count + 2 * se.fit)) +
+  geom_point() +
+  geom_linerange(color = grey(0.75)) +
+  geom_abline(intercept = 0, slope = 1) +
+  xlab("Predicted Probability") +
+  ylab("Observed Proportion") +
+  ggtitle("Goodness-of-Fit Check for Logistic Regression Model")
+
+
+                       
+```
+
+
+
+
+#confusion matrix for updated logistic 1 model
+```{r}
+predicted_probabilities <- predict(logistic.model2, newdata = valid_set, type = "response")
+
+predicted_classes <- ifelse(predicted_probabilities > threshold, 1, 0)
+
+confusion_matrix <- table(Predicted = predicted_classes, Actual = actual_outcomes)
+print(confusion_matrix)
+TP <- confusion_matrix[2, 2]
+FP <- confusion_matrix[1, 2]
+FN <- confusion_matrix[2, 1]
+TN <- confusion_matrix[1, 1]
+
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+
+F1_score <- 2 * (precision * recall) / (precision + recall)
+F1_score
+
+roc_result <- roc(valid_set$Churn, predicted_probabilities)
+auc_value <- auc(roc_result)
+print(auc_value)
+
+BER = 0.5*(FP/(TN+FP) + FN/(FN+TP))
+BER
+
+plot(roc_result, main = paste("ROC Curve (AUC =", auc_value, ")"))
+```
+
+
+
+
+```{r}
+
+gam_model <- gam(Churn ~ s(Age, k= 15) + s(MonthlyCharges,k= 15) + s(tenure,k= 15) + 
+                 gender_Male + 
+                 Dependents_Yes + PhoneService_Yes + MultipleLines_Yes + 
+                 InternetService_Fiber.optic + InternetService_No + 
+                 OnlineSecurity_Yes + OnlineBackup_Yes + DeviceProtection_Yes + 
+                 TechSupport_Yes + StreamingTV_Yes + StreamingMovies_Yes + 
+                 Contract_One.year + Contract_Two.year  + 
+                 PaymentMethod_Credit.card..automatic. + PaymentMethod_Electronic.check + 
+                 PaymentMethod_Mailed.check,
+                 family = binomial, 
+                 data = train_set,method = "REML")
+
+
+```
+
+
+```{r}
+gam_model_2 = gam(Churn ~ s(Age,k = 15,bs="bs") + s(MonthlyCharges,k = 15,bs="bs") + s(tenure,k = 15,bs="bs") + 
+                 InternetService_Fiber.optic + InternetService_No + 
+                 OnlineSecurity_Yes  + 
+                 TechSupport_Yes   + 
+                 Contract_One.year + Contract_Two.year,
+                 family = binomial, 
+                 data = train_set,method = "REML")
+# Make predictions
+predictions <- predict(gam_model_2, newdata = valid_set, type = "response")
+
+predicted_labels <- ifelse(predictions> 0.5, 1, 0)
+
+# Actual class labels from the test data
+actual_labels <- valid_y  # Replace 'y' with the actual name of your binary response variable
+
+# Construct the confusion matrix
+confusion_matrix <- table(Predicted = predicted_labels, Actual = actual_labels)
+
+# Print the confusion matrix
+print(confusion_matrix)
+
+# Calculate the ROC curve
+roc_result <- roc(valid_set$Churn, predictions)
+
+# Calculate the AUC
+auc_value <- auc(roc_result)
+
+# Print the AUC value
+print(auc_value)
+
+TP <- confusion_matrix[2, 2]
+FP <- confusion_matrix[1, 2]
+FN <- confusion_matrix[2, 1]
+
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+
+F1_score <- 2 * (precision * recall) / (precision + recall)
+F1_score
+
+TN <- confusion_matrix[1, 1]
+
+BER = 0.5*(FP/(TN+FP) + FN/(FN+TP))
+BER
+plot(roc_result, main = paste("ROC Curve (AUC =", auc_value, ")"))
+```
+```{r}
+summary(gam_model)
+```
+
+
+#get rid of paperless billing
+```{r}
+gam_model_2 = gam(Churn ~ s(Age,k = 15,bs="bs") + s(MonthlyCharges,k = 15,bs="bs") + s(tenure,k = 15,bs="bs") + 
+                 gender_Male + 
+                 Dependents_Yes  + 
+                 InternetService_Fiber.optic + InternetService_No + 
+                 OnlineSecurity_Yes + OnlineBackup_Yes + DeviceProtection_Yes + 
+                 TechSupport_Yes   + 
+                 Contract_One.year + Contract_Two.year + 
+                 PaymentMethod_Credit.card..automatic. + 
+                 PaymentMethod_Mailed.check,
+                 family = binomial, 
+                 data = train_set,method = "REML")
+
+```
+
+```{r}
+library(FactoMineR)
+categorical_data <- train_set[, 1:20]
+result_mca <- MCA(categorical_data)
+print(result_mca$eig)
+print(result_mca$var$contrib)
+```
+
+
+
+
+
+
